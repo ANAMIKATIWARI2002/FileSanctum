@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"time"
+	
 
 	"github.com/ANAMIKATIWARI2002/FileSanctum/p2p"
 )
@@ -49,7 +50,7 @@ func main() {
 
 	for i := 0; i < 20; i++ {
 		key := fmt.Sprintf("picture_%d.png", i)
-		data := bytes.NewReader([]byte("my big data file here!"))
+		data := bytes.NewReader([]byte("it was really hard to develope this!"))
 		s3.Store(key, data)
 
 		if err := s3.store.Delete(s3.ID, key); err != nil {

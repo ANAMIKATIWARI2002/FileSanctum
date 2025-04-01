@@ -9,6 +9,10 @@ import (
 	"log"
 	"os"
 	"strings"
+	"path/filepath"
+	"regexp"
+	"net"
+	"sync"
 )
 
 const defaultRootFolderName = "ggnetwork"
@@ -55,6 +59,7 @@ type StoreOpts struct {
 	// Root is the folder name of the root, containing all the folders/files of the system.
 	Root              string
 	PathTransformFunc PathTransformFunc
+	ListenAddr string
 }
 
 var DefaultPathTransformFunc = func(key string) PathKey {
@@ -66,24 +71,52 @@ var DefaultPathTransformFunc = func(key string) PathKey {
 
 type Store struct {
 	StoreOpts
+	ListenAddr string
+    Root       string
+	storageDir string  // Add this field
+    networkDir string  // Add this field
+    peers      map[string]net.Conn
+    mu         sync.Mutex
+	PathTransformFunc func(string) PathKey 
+	
 }
 
-func NewStore(opts StoreOpts) *Store {
-	if opts.PathTransformFunc == nil {
-		opts.PathTransformFunc = DefaultPathTransformFunc
-	}
-	if len(opts.Root) == 0 {
-		opts.Root = defaultRootFolderName
-	}
 
-	return &Store{
-		StoreOpts: opts,
-	}
+func NewStore(opts StoreOpts) *Store {
+    sanitize := func(path string) string {
+        return strings.ReplaceAll(path, ":", "_")
+    }
+
+    sanitizedRoot := sanitize(opts.Root)
+    
+    return &Store{
+        ListenAddr: opts.ListenAddr,
+        Root:       sanitizedRoot,
+        storageDir: filepath.Join(sanitizedRoot + "_storage"),
+        networkDir: filepath.Join(sanitizedRoot + "_network"),
+        peers:      make(map[string]net.Conn),
+        PathTransformFunc: DefaultPathTransformFunc, // Add default transform
+    }
 }
 
 func (s *Store) Has(id string, key string) bool {
 	pathKey := s.PathTransformFunc(key)
-	fullPathWithRoot := fmt.Sprintf("%s/%s/%s", s.Root, id, pathKey.FullPath())
+
+	sanitize := func(path string) string {
+        return strings.ReplaceAll(path, ":", "_")
+    }
+
+	pathNameWithRoot := filepath.Join(
+        s.storageDir,
+        sanitize(id),
+        sanitize(pathKey.PathName),
+    )
+	// fullPathWithRoot := fmt.Sprintf("%s/%s/%s", s.Root, id, pathKey.FullPath())
+
+	fullPathWithRoot := filepath.Join(
+        pathNameWithRoot,
+        sanitize(pathKey.Filename),
+    )
 
 	_, err := os.Stat(fullPathWithRoot)
 	return !errors.Is(err, os.ErrNotExist)
@@ -92,6 +125,7 @@ func (s *Store) Has(id string, key string) bool {
 func (s *Store) Clear() error {
 	return os.RemoveAll(s.Root)
 }
+
 
 func (s *Store) Delete(id string, key string) error {
 	pathKey := s.PathTransformFunc(key)
@@ -118,16 +152,51 @@ func (s *Store) WriteDecrypt(encKey []byte, id string, key string, r io.Reader) 
 	return int64(n), err
 }
 
+func sanitizePathComponent(input string) string {
+    // Remove all non-alphanumeric characters except underscores and hyphens
+    reg := regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
+    safe := reg.ReplaceAllString(input, "")
+    
+    // Ensure Windows reserved names are handled
+    if strings.HasPrefix(strings.ToLower(safe), "con") || 
+       strings.HasPrefix(strings.ToLower(safe), "aux") {
+        safe = "file_" + safe
+    }
+    
+    return safe
+}
+
 func (s *Store) openFileForWriting(id string, key string) (*os.File, error) {
-	pathKey := s.PathTransformFunc(key)
-	pathNameWithRoot := fmt.Sprintf("%s/%s/%s", s.Root, id, pathKey.PathName)
-	if err := os.MkdirAll(pathNameWithRoot, os.ModePerm); err != nil {
-		return nil, err
-	}
+    if s == nil {
+        return nil, fmt.Errorf("store is nil")
+    }
+    
+    if s.PathTransformFunc == nil {
+        return nil, fmt.Errorf("PathTransformFunc is not initialized")
+    }
 
-	fullPathWithRoot := fmt.Sprintf("%s/%s/%s", s.Root, id, pathKey.FullPath())
+    pathKey := s.PathTransformFunc(key)
+    
+    sanitize := func(path string) string {
+        return strings.ReplaceAll(path, ":", "_")
+    }
 
-	return os.Create(fullPathWithRoot)
+    pathNameWithRoot := filepath.Join(
+        s.storageDir,
+        sanitize(id),
+        sanitize(pathKey.PathName),
+    )
+
+    if err := os.MkdirAll(pathNameWithRoot, os.ModePerm); err != nil {
+        return nil, err
+    }
+
+    fullPathWithRoot := filepath.Join(
+        pathNameWithRoot,
+        sanitize(pathKey.Filename),
+    )
+
+    return os.Create(fullPathWithRoot)
 }
 
 func (s *Store) writeStream(id string, key string, r io.Reader) (int64, error) {
@@ -138,13 +207,30 @@ func (s *Store) writeStream(id string, key string, r io.Reader) (int64, error) {
 	return io.Copy(f, r)
 }
 
+
+
 func (s *Store) Read(id string, key string) (int64, io.Reader, error) {
 	return s.readStream(id, key)
 }
 
 func (s *Store) readStream(id string, key string) (int64, io.ReadCloser, error) {
 	pathKey := s.PathTransformFunc(key)
-	fullPathWithRoot := fmt.Sprintf("%s/%s/%s", s.Root, id, pathKey.FullPath())
+
+	sanitize := func(path string) string {
+        return strings.ReplaceAll(path, ":", "_")
+    }
+
+	pathNameWithRoot := filepath.Join(
+        s.storageDir,
+        sanitize(id),
+        sanitize(pathKey.PathName),
+    )
+
+	fullPathWithRoot := filepath.Join(
+        pathNameWithRoot,
+        sanitize(pathKey.Filename),
+    )
+	// fullPathWithRoot := fmt.Sprintf("%s/%s/%s", s.Root, id, pathKey.FullPath())
 
 	file, err := os.Open(fullPathWithRoot)
 	if err != nil {

@@ -28,7 +28,7 @@ func TestStore(t *testing.T) {
 
 	for i := 0; i < 50; i++ {
 		key := fmt.Sprintf("foo_%d", i)
-		data := []byte("some jpg bytes")
+		data := []byte("here is my bigdata file!!!")
 
 		if _, err := s.writeStream(id, key, bytes.NewReader(data)); err != nil {
 			t.Error(err)
