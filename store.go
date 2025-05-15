@@ -88,16 +88,23 @@ func NewStore(opts StoreOpts) *Store {
     }
 
     sanitizedRoot := sanitize(opts.Root)
-    
+
+    // If no custom PathTransformFunc is provided, use the default one
+    pathFunc := opts.PathTransformFunc
+    if pathFunc == nil {
+        pathFunc = DefaultPathTransformFunc
+    }
+
     return &Store{
-        ListenAddr: opts.ListenAddr,
-        Root:       sanitizedRoot,
-        storageDir: filepath.Join(sanitizedRoot + "_storage"),
-        networkDir: filepath.Join(sanitizedRoot + "_network"),
-        peers:      make(map[string]net.Conn),
-        PathTransformFunc: DefaultPathTransformFunc, // Add default transform
+        ListenAddr:        opts.ListenAddr,
+        Root:              sanitizedRoot,
+        storageDir:        filepath.Join(sanitizedRoot + "_storage"),
+        networkDir:        filepath.Join(sanitizedRoot + "_network"),
+        peers:             make(map[string]net.Conn),
+        PathTransformFunc: pathFunc,
     }
 }
+
 
 func (s *Store) Has(id string, key string) bool {
 	pathKey := s.PathTransformFunc(key)
